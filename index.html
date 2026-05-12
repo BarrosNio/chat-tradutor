@@ -276,7 +276,10 @@
         </div>
     </div>
 
+    <script src="/socket.io/socket.io.js"></script>
     <script>
+        const socket = io(); // Conecta ao servidor Socket.IO
+
         let targetLang = 'en';
         const display = document.getElementById('message-display');
         const emojiGrid = document.getElementById('emoji-grid');
@@ -327,31 +330,85 @@
                 let langPair = `pt|${targetLang === 'ph' ? 'tl' : targetLang}`;
                 const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${langPair}`);
                 const data = await response.json();
-                tempSpan.innerText = data.responseData.translatedText;
+                const translatedText = data.responseData.translatedText;
+                
+                tempSpan.innerText = translatedText;
                 tempSpan.removeAttribute('id');
+
+                // Enviar para o servidor
+                socket.emit('chatMessage', {
+                    originalText: text,
+                    translatedText: translatedText,
+                    lang: targetLang
+                });
             } catch (e) { tempSpan.innerText = "Erro na conexão"; }
         }
 
-        // Música Local
+        // Receber mensagem de outros usuários
+        socket.on('chatMessage', (data) => {
+            const div = document.createElement('div');
+            div.className = 'msg-bubble';
+            // Alinhado à esquerda e com cor ligeiramente diferente
+            div.style.alignSelf = 'flex-start';
+            div.style.background = 'rgba(157, 0, 255, 0.1)';
+            div.style.borderColor = 'var(--neon-purple)';
+            div.innerHTML = `${data.originalText} <span class="trans-text" style="color:var(--neon-purple); border-top-color:rgba(157,0,255,0.2)">${data.translatedText}</span>`;
+            display.appendChild(div);
+            display.scrollTop = display.scrollHeight;
+        });
+
+        // Música Local e Compartilhamento
         function handleFile(event) {
             const file = event.target.files[0];
             if (!file) return;
-            const url = URL.createObjectURL(file);
+
+            // Converter para base64 para enviar via websocket
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const base64Audio = e.target.result;
+                
+                // Enviar para o servidor
+                socket.emit('audioFile', {
+                    name: file.name,
+                    data: base64Audio
+                });
+
+                // Mostrar localmente
+                appendAudioToChat(file.name, base64Audio, 'flex-end');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Receber música de outros usuários
+        socket.on('audioFile', (fileData) => {
+            appendAudioToChat(fileData.name, fileData.data, 'flex-start');
+        });
+
+        function appendAudioToChat(fileName, audioDataUrl, align) {
             const div = document.createElement('div');
             div.className = 'msg-bubble';
+            div.style.alignSelf = align;
+            if(align === 'flex-start') {
+                div.style.background = 'rgba(157, 0, 255, 0.1)';
+                div.style.borderColor = 'var(--neon-purple)';
+            }
             div.innerHTML = `
             <div class="audio-player">
-                <div style="color:var(--neon-green); font-size:11px; margin-bottom:5px;">📁 ${file.name}</div>
+                <div style="color:var(--neon-green); font-size:11px; margin-bottom:5px;">📁 ${fileName}</div>
                 <div class="progress-bar"><div class="progress-fill"></div></div>
-                <audio src="${url}" controls autoplay style="width:100%; height:30px;"></audio>
+                <audio src="${audioDataUrl}" controls autoplay style="width:100%; height:30px;"></audio>
             </div>
-        `;
+            `;
             display.appendChild(div);
             display.scrollTop = display.scrollHeight;
         }
 
         // Winks e Nudge
-        function triggerWink(type) {
+        function triggerWink(type, emit = true) {
+            if (emit) {
+                socket.emit('wink', type);
+            }
+
             if (type === 'nudge') {
                 document.getElementById('main-body').classList.add('nudge-active');
                 setTimeout(() => document.getElementById('main-body').classList.remove('nudge-active'), 1000);
@@ -364,6 +421,11 @@
                 setTimeout(() => { layer.style.opacity = "0"; layer.style.transform = "scale(1)"; }, 2000);
             }
         }
+
+        // Receber wink de outros usuários
+        socket.on('wink', (type) => {
+            triggerWink(type, false);
+        });
 
         // Arrastar
         let isDragging = false, ox, oy;
